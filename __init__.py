@@ -22,20 +22,20 @@ def get_quotes_file(group_id: int) -> str:
 # 初始化 JSON 文件（如果文件不存在则创建）
 def initialize_json(group_id: int):
     try:
-        with open(get_quotes_file(group_id), "r") as f:
+        with open(get_quotes_file(group_id), "r", encoding="utf-8") as f:
             json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        with open(get_quotes_file(group_id), "w") as f:
-            json.dump({}, f)
+        with open(get_quotes_file(group_id), "w", encoding="utf-8") as f:
+            json.dump({}, f, ensure_ascii=False)
 
 # 加载语录数据
 def load_quotes(group_id: int) -> Dict[str, List[str]]:
-    with open(get_quotes_file(group_id), "r") as f:
+    with open(get_quotes_file(group_id), "r", encoding="utf-8") as f:
         return json.load(f)
 
 # 保存语录数据
 def save_quotes(group_id: int, data: Dict[str, List[str]]):
-    with open(get_quotes_file(group_id), "w") as f:
+    with open(get_quotes_file(group_id), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 # 正则表达式用于提取图片文件路径
@@ -52,7 +52,11 @@ async def handle_add_quote(bot: Bot, event: GroupMessageEvent, args: Message = C
     files = re.findall(rt, msg)
     reply_message_id = event.reply.message_id if event.reply else None
 
-    # 验证输入格式
+    # 检查是否提供了标签
+    if not msg_text:
+        await add_quote.finish("tag呢？")
+
+    # 验证输入格式是否包含图片或回复图片
     if not (files or reply_message_id):
         await add_quote.finish("图呢？")
 
@@ -77,10 +81,8 @@ async def handle_add_quote(bot: Bot, event: GroupMessageEvent, args: Message = C
     except Exception as e:
         await add_quote.finish(f"获取图片信息失败: {e}")
 
-    # 获取标签
+    # 保存图片路径和标签
     tag = msg_text
-
-    # 保存图片的文件路径
     image_local_path = file_id
 
     # 初始化和读取群语录数据
@@ -125,7 +127,7 @@ async def handle_get_quote(bot: Bot, event: GroupMessageEvent, args: Message = C
             try:
                 image_info = await bot.call_api('get_image', **{'file': image_local_path})
                 image_url = image_info['url']
-                await get_quote.send(MessageSegment.image(image_url) + f"\n标签：{matched_tag}")
+                await get_quote.send(MessageSegment.image(image_url) + f"标签：{matched_tag}")
             except Exception as e:
                 await get_quote.finish(f"获取图片信息失败: {e}")
         else:
@@ -139,7 +141,7 @@ async def handle_get_quote(bot: Bot, event: GroupMessageEvent, args: Message = C
         try:
             image_info = await bot.call_api('get_image', **{'file': image_local_path})
             image_url = image_info['url']
-            await get_quote.send(MessageSegment.image(image_url) + f"\n标签：{matched_tag}")
+            await get_quote.send(MessageSegment.image(image_url) + f"标签：{matched_tag}")
         except Exception as e:
             await get_quote.finish(f"获取图片信息失败: {e}")
 
