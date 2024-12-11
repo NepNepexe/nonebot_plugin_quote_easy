@@ -7,6 +7,8 @@ from nonebot.plugin import on_command
 from nonebot.params import CommandArg
 from typing import Dict, List
 import os
+import uuid
+import httpx
 
 # 定义保存目录
 SAVE_DIR = "data/quote"
@@ -39,7 +41,30 @@ def save_quotes(group_id: int, data: Dict[str, List[str]]):
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 # 正则表达式用于提取图片文件路径
-rt = r"\[CQ:image,file=(.*?),subType=[\S]*,url=[\S]*\]"
+rt = r"$CQ:image,file=(.*?),subType=[\S]*,url=[\S]*$"
+
+# 下载并保存图片到本地
+async def download_and_save_image(bot: Bot, file_id: str, group_id: int) -> str:
+    try:
+        image_info = await bot.call_api('get_image', **{'file': file_id})
+        image_url = image_info['url']
+    except Exception as e:
+        raise Exception(f"获取图片信息失败: {e}")
+
+    # 使用httpx下载图片
+    async with httpx.AsyncClient() as client:
+        response = await client.get(image_url)
+        if response.status_code != 200:
+            raise Exception("图片下载失败")
+
+        # 生成唯一文件名并保存图片
+        random_filename = f"{uuid.uuid4().hex}.png"
+        image_local_path = os.path.join(SAVE_DIR, str(group_id), random_filename)
+        os.makedirs(os.path.dirname(image_local_path), exist_ok=True)  # 确保目录存在
+        with open(image_local_path, "wb") as f:
+            f.write(response.content)
+
+    return image_local_path
 
 # 添加语录命令
 add_quote = on_command("添加语录", priority=50)
@@ -74,16 +99,14 @@ async def handle_add_quote(bot: Bot, event: GroupMessageEvent, args: Message = C
         except Exception as e:
             await add_quote.finish(f"获取回复消息失败: {e}")
 
-    # 获取图片信息
+    # 下载并保存图片到本地
     try:
-        image_info = await bot.call_api('get_image', **{'file': file_id})
-        image_url = image_info['url']
+        image_local_path = await download_and_save_image(bot, file_id, event.group_id)
     except Exception as e:
-        await add_quote.finish(f"获取图片信息失败: {e}")
+        await add_quote.finish(str(e))
 
     # 保存图片路径和标签
     tag = msg_text
-    image_local_path = file_id
 
     # 初始化和读取群语录数据
     group_id = event.group_id
@@ -104,7 +127,6 @@ async def handle_add_quote(bot: Bot, event: GroupMessageEvent, args: Message = C
     # 回复信息
     await add_quote.send(f"整好了，当前有{total_quotes}条语录~")
 
-
 # 查看语录命令
 get_quote = on_command("语录", priority=50)
 
@@ -120,16 +142,11 @@ async def handle_get_quote(bot: Bot, event: GroupMessageEvent, args: Message = C
     # 如果提供了标签，则进行模糊匹配查找
     if tag:
         # 使用模糊匹配找到最接近的标签
-        close_matches = difflib.get_close_matches(tag, quotes.keys(), n=1, cutoff=0.6)
+        close_matches = difflib.get_close_matches(tag, quotes.keys(), n=1, cutoff=0.3)
         if close_matches:
             matched_tag = close_matches[0]
             image_local_path = random.choice(quotes[matched_tag])  # 随机选取该标签下的一条语录
-            try:
-                image_info = await bot.call_api('get_image', **{'file': image_local_path})
-                image_url = image_info['url']
-                await get_quote.send(MessageSegment.image(image_url) + f"标签：{matched_tag}")
-            except Exception as e:
-                await get_quote.finish(f"获取图片信息失败: {e}")
+            await get_quote.send(MessageSegment.image(f"file:///{os.path.abspath(image_local_path)}") + f"标签：{matched_tag}")
         else:
             await get_quote.finish("没有找到这个标签的语录。")
     else:
@@ -138,12 +155,7 @@ async def handle_get_quote(bot: Bot, event: GroupMessageEvent, args: Message = C
         if not all_images_with_tags:
             await get_quote.finish("当前没有任何语录。")
         image_local_path, matched_tag = random.choice(all_images_with_tags)  # 随机选取一条语录及其标签
-        try:
-            image_info = await bot.call_api('get_image', **{'file': image_local_path})
-            image_url = image_info['url']
-            await get_quote.send(MessageSegment.image(image_url) + f"标签：{matched_tag}")
-        except Exception as e:
-            await get_quote.finish(f"获取图片信息失败: {e}")
+        await get_quote.send(MessageSegment.image(f"file:///{os.path.abspath(image_local_path)}") + f"标签：{matched_tag}")
 
 # 删除语录命令
 delete_quote = on_command("删除语录", priority=50)
